@@ -105,9 +105,12 @@
           <strong>Rental Amount:</strong> ₹<%= rental.rental_amount %><br>
           <strong>Security Deposit:</strong> ₹<%= rental.security_amount %><br>
           <strong>Status:</strong> 
-          <span class="rental-status status-<%= rental.status %>">
-            <%= rental.status.humanize %>
-          </span>
+          <select id="status-select-<%= rental.id %>" class="rental-status status-<%= rental.status %>" style="display: inline-block;">
+            <% Rental.statuses.keys.each do |status| %>
+              <option value="<%= status %>" <%= 'selected' if rental.status == status %>><%= status.humanize %></option>
+            <% end %>
+          </select>
+          <button class="btn" style="padding: 2px 8px; font-size: 0.8em; margin-left: 5px;" onclick="saveOverrideStatus(<%= rental.id %>)">Save Status</button>
         </div>
         
         <% if rental.order_id.present? %>
@@ -248,6 +251,13 @@
       }
     }
     
+    function saveOverrideStatus(rentalId) {
+      const newStatus = document.getElementById("status-select-" + rentalId).value;
+      if (confirm("Are you sure you want to forcibly override the status to " + newStatus + "?")) {
+        transitionRental(rentalId, newStatus);
+      }
+    }
+
     function transitionRental(rentalId, status, damageAmount = null) {
       const url = '/api/rentals/' + rentalId + '/transition';
       const data = { status: status };

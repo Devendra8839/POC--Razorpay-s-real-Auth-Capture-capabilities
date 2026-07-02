@@ -64,7 +64,7 @@ class Api::RentalLifecycleController < ApplicationController
   end
     def admin_capture_damage
     rental = Rental.find(params[:rental_id])
-    binding.irb
+    # binding.irb
     # if rental.status == 'damage' && rental.damage_amount.to_i > 0
       if capture_damage_amount(rental, rental.damage_amount)
         rental.update(status: 'completed')
@@ -103,6 +103,42 @@ class Api::RentalLifecycleController < ApplicationController
     end
   end
 
+  def admin_capture_damage
+    rental = Rental.find(params[:rental_id])
+    if rental.status == "damage" && rental.damage_amount.to_i > 0
+      if capture_damage_amount(rental, rental, rental.damage_amount)
+        rental.update(status: "completed")
+        render json: { success: true, message: "Damage captured successfully, remainder refunded automatically." }
+      else
+        render json: { error: "Failed to capture damage from Razorpay." }, status: :internal_server_error
+      end
+    else
+      render json: { error: "Invalid state or no damage amount recorded." }, status: :bad_request
+    end
+  end
+
+  def refund_status
+    rental = Rental.find(params[:rental_id])
+    security_payment = Payment.find_by(rental_id: rental.id, payment_type: "security_deposit")
+    if security_payment.nil? || security_payment.authorization_id.blank?
+      return render json: { status: "No active security hold found." }
+    end
+    begin
+      rzp_payment = Razorpay::Payment.fetch(security_payment.authorization_id)
+      message = "Status: #{rzp_payment.status}. "
+      if rzp_payment.amount_refunded && rzp_payment.amount_refunded > 0
+        message += "₹#{rzp_payment.amount_refunded / 100.0} has been refunded. "
+      end
+      if rzp_payment.status == "captured"
+        amount_captured = rzp_payment.amount - (rzp_payment.amount_refunded || 0)
+        message += "₹#{amount_captured / 100.0} was captured."
+      end
+      render json: { status: message }
+    rescue => e
+      render json: { error: "Failed to fetch status: #{e.message}" }, status: :internal_server_error
+    end
+  end
+
   private
   
   def valid_transition?(current_status, new_status)
@@ -118,7 +154,7 @@ class Api::RentalLifecycleController < ApplicationController
       'unreturned' => ['completed']
     }
     
-    valid_transitions[current_status.to_sym]&.include?(new_status) || false
+    true
   end
   
   def handle_authorized(rental)
@@ -191,51 +227,43 @@ class Api::RentalLifecycleController < ApplicationController
     end
   end
   
-  def capture_damage_amount(rental, amount)
-    # Find the security deposit payment
-    security_payment = Payment.find_by(rental_id: rental.id, payment_type: 'security_deposit')
-    
-    if security_payment && security_payment.authorization_id.present?
-      # Capture the damage amount
-      begin
-        Rails.logger.info "[Razorpay API] Capturing damage amount for rental #{rental.id}"
-        
-        capture = Razorpay::Payment.capture(security_payment.authorization_id, { amount: amount * 100 })
-        
-        # Create damage capture payment record
-        damage_payment = Payment.create(
-          payment_id: capture.id,
-          authorization_id: security_payment.authorization_id,
-          capture_id: capture.id,
-          status: 'captured',
-          amount: capture.amount,
-          payment_type: 'damage_capture',
-          rental_id: rental.id
-        )
-        
-        # Update original security payment
-        security_payment.update(
-          capture_id: capture.id,
-          status: 'partially_captured'
-        )
-        
-        # Log successful API call
-        damage_payment.log_api_call('POST', "payments/#{security_payment.authorization_id}/capture", {
-          amount: amount * 100
-        }, capture.as_json, true)
-        
-        true
-      rescue => e
-        # Log failed API call
-        Rails.logger.error "[Razorpay API] Failed to capture damage amount for rental #{rental.id}: #{e.message}"
-        
-        Rails.logger.error "Failed to capture damage amount: #{e.message}"
-        false
-      end
-    else
+  def capture_damage_amount(rental, amount, damage_amount)
+      # binding.irb
+  security_payment = Payment.find_by(rental_id: rental.id, payment_type: 'security_deposit')
+  if security_payment && security_payment.authorization_id.present?
+    begin
+      Rails.logger.info "[Razorpay API] Capturing damage amount for rental #{rental.id}"
+      capture = Razorpay::Payment.capture(security_payment.authorization_id, { amount: amount.security_amount * 100 })
+      
+      full_capture = Payment.create(
+        payment_id: capture.id,
+        authorization_id: security_payment.authorization_id,
+        capture_id: capture.id,
+        status: 'captured',
+        amount: capture.amount,
+        payment_type: 'full_capture',
+        rental_id: rental.id
+      )
+      
+      security_payment.update(
+        capture_id: capture.id,
+        status: 'full capture security'
+      )
+      partial_capture = Razorpay::Payment.fetch(security_payment.authorization_id)
+      refund = partial_capture.refund(amount: (amount.security_amount - damage_amount) * 100)
+      
+      true
+    rescue => e
+      Rails.logger.error "[Razorpay API] Failed to capture damage amount for rental #{rental.id}: #{e.message}"
+      Rails.logger.error "Failed to capture damage: #{e.message}"
       false
     end
+  else
+    false
   end
+end
+
+
   
   def capture_full_security(rental)
     # Find the security deposit payment

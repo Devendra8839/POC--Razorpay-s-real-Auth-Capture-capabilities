@@ -56,6 +56,7 @@ class Api::PaymentsController < ApplicationController
       )
       
       # Store order ID in rental
+      # binding.irb
       rental.update(order_id: razorpay_order.id)
       
       # Log successful API call
