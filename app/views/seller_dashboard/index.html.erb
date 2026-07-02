@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <%= csrf_meta_tags %>
+  <title>Seller Dashboard - Razorpay Rental POC</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      line-height: 1.6;
+    }
+    .dashboard {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    h1 {
+      color: #333;
+    }
+    .rental-card {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      background-color: #f9f9f9;
+    }
+    .rental-status {
+      padding: 5px 10px;
+      border-radius: 4px;
+      display: inline-block;
+      font-weight: bold;
+    }
+    .status-requested { background-color: #fff3cd; }
+    .status-payment_pending { background-color: #ffeeba; }
+    .status-rental_paid { background-color: #d1ecf1; }
+    .status-authorized { background-color: #cce5ff; }
+    .status-active { background-color: #d4edda; }
+    .status-returned { background-color: #e2e3e5; }
+    .status-completed { background-color: #d4edda; }
+    .status-damage { background-color: #f8d7da; }
+    .status-unreturned { background-color: #f5c6cb; }
+    .action-buttons {
+      margin-top: 15px;
+    }
+    button {
+      padding: 8px 16px;
+      margin-right: 10px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .btn-primary {
+      background-color: #007bff;
+      color: white;
+    }
+    .btn-success {
+      background-color: #28a745;
+      color: white;
+    }
+    .btn-danger {
+      background-color: #dc3545;
+      color: white;
+    }
+    .btn-warning {
+      background-color: #ffc107;
+      color: black;
+    }
+    .btn-secondary {
+      background-color: #6c757d;
+      color: white;
+    }
+    .payment-info {
+      margin-top: 15px;
+      padding: 10px;
+      background-color: #e9ecef;
+      border-radius: 4px;
+    }
+    .damage-form {
+      margin-top: 10px;
+      display: none;
+      padding: 10px;
+      background-color: #f8f9fa;
+      border-radius: 4px;
+      border: 1px solid #dee2e6;
+    }
+    .damage-form input {
+      padding: 8px;
+      margin-right: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="dashboard">
+    <h1>Seller Dashboard</h1>
+    
+    <h2>Your Rentals</h2>
+    
+    <% @rentals.each do |rental| %>
+      <div class="rental-card">
+        <h3>Rental #<%= rental.id %></h3>
+        
+        <div>
+          <strong>Product:</strong> <%= rental.product&.name || 'Product #' + rental.product_id.to_s %><br>
+          <strong>Renter:</strong> <%= rental.renter&.name || 'User #' + rental.renter_id.to_s %><br>
+          <strong>Dates:</strong> <%= rental.days %> days<br>
+          <strong>Rental Amount:</strong> ₹<%= rental.rental_amount %><br>
+          <strong>Security Deposit:</strong> ₹<%= rental.security_amount %><br>
+          <strong>Status:</strong> 
+          <span class="rental-status status-<%= rental.status %>">
+            <%= rental.status.humanize %>
+          </span>
+        </div>
+        
+        <% if rental.order_id.present? %>
+          <div class="payment-info">
+            <strong>Rental Payment Order:</strong> <%= rental.order_id %><br>
+            <% rental_payment = rental.payments.find_by(payment_type: 'rental_payment') %>
+            <% if rental_payment %>
+              <strong>Payment Status:</strong> <%= rental_payment.status %><br>
+              <strong>Payment ID:</strong> <%= rental_payment.payment_id %><br>
+            <% end %>
+          </div>
+        <% end %>
+        
+        <% if rental.security_order_id.present? %>
+          <div class="payment-info">
+            <strong>Security Deposit Order:</strong> <%= rental.security_order_id %><br>
+            <% security_payment = rental.payments.find_by(payment_type: 'security_deposit') %>
+            <% if security_payment %>
+              <strong>Authorization Status:</strong> <%= security_payment.status %><br>
+              <% if security_payment.authorization_id %>
+                <strong>Authorization ID:</strong> <%= security_payment.authorization_id %><br>
+              <% end %>
+              <% if security_payment.capture_id %>
+                <strong>Capture ID:</strong> <%= security_payment.capture_id %><br>
+              <% end %>
+            <% end %>
+          </div>
+        <% end %>
+        
+        <% if rental.damage_amount.to_i > 0 %>
+          <div class="payment-info" style="background-color: #f8d7da; border-left: 4px solid #dc3545; margin-top: 15px;">
+            <strong>Damage Reported:</strong> ₹<%= rental.damage_amount %> 
+            <% if rental.status == 'damage' %>
+              (Pending admin review)
+            <% elsif rental.status == 'completed' %>
+              (Processed)
+            <% end %>
+          </div>
+        <% end %>
+        
+        <div class="action-buttons">
+          <% case rental.status %>
+          <% when 'authorized' %>
+            <button class="btn-primary" onclick="markAsActive(<%= rental.id %>)">Mark as Active (Item Delivered)</button>
+          <% when 'active' %>
+            <button class="btn-success" onclick="markAsReturned(<%= rental.id %>)">Mark as Returned</button>
+            <button class="btn-warning" onclick="toggleDamageForm(<%= rental.id %>)">Report Damage</button>
+            <button class="btn-danger" onclick="markAsNotReturned(<%= rental.id %>)">Mark as Not Returned</button>
+            
+            <div class="damage-form" id="damage-form-<%= rental.id %>">
+              <input type="number" id="damage-amount-<%= rental.id %>" placeholder="Damage amount in ₹" min="0" max="<%= rental.security_amount %>" style="width: 200px;">
+              <button class="btn-danger" onclick="reportDamage(<%= rental.id %>)">Submit Damage Report</button>
+              <button class="btn-secondary" onclick="toggleDamageForm(<%= rental.id %>)" style="background-color: #6c757d; color: white;">Cancel</button>
+            </div>
+          <% when 'damage' %>
+            <div style="margin-bottom: 10px; color: #721c24; font-weight: bold;">
+              Damage reported: ₹<%= rental.damage_amount %> (Pending admin review)
+            </div>
+            <button class="btn-success" onclick="markAsCompleted(<%= rental.id %>)">Complete Rental</button>
+            <button class="btn-warning" onclick="updateDamageAmount(<%= rental.id %>)">Update Damage Amount</button>
+            
+            <div class="damage-form" id="update-damage-form-<%= rental.id %>">
+              <input type="number" id="update-damage-amount-<%= rental.id %>" placeholder="New damage amount in ₹" min="0" max="<%= rental.security_amount %>" style="width: 200px;" value="<%= rental.damage_amount %>">
+              <button class="btn-danger" onclick="updateDamageReport(<%= rental.id %>)">Update Damage</button>
+              <button class="btn-secondary" onclick="toggleUpdateDamageForm(<%= rental.id %>)" style="background-color: #6c757d; color: white;">Cancel</button>
+            </div>
+          <% when 'returned', 'unreturned' %>
+            <% if rental.damage_amount.to_i > 0 %>
+              <div style="margin-bottom: 10px; color: #721c24; font-weight: bold;">
+                Damage reported: ₹<%= rental.damage_amount %>
+              </div>
+            <% end %>
+            <button class="btn-success" onclick="markAsCompleted(<%= rental.id %>)">Complete Rental</button>
+          <% end %>
+        </div>
+      </div>
+    <% end %>
+  </div>
+  
+  <script>
+    function markAsActive(rentalId) {
+      if (confirm('Are you sure the item has been delivered and rental should be marked as active?')) {
+        transitionRental(rentalId, 'active');
+      }
+    }
+    
+    function markAsReturned(rentalId) {
+      if (confirm('Has the item been returned in good condition?')) {
+        transitionRental(rentalId, 'returned');
+      }
+    }
+    
+    function markAsCompleted(rentalId) {
+      if (confirm('Are you sure you want to complete this rental?')) {
+        transitionRental(rentalId, 'completed');
+      }
+    }
+    
+    function markAsNotReturned(rentalId) {
+      if (confirm('Are you sure the item was not returned? This will capture the full security deposit.')) {
+        transitionRental(rentalId, 'unreturned');
+      }
+    }
+    
+    function toggleDamageForm(rentalId) {
+      const form = document.getElementById('damage-form-' + rentalId);
+      form.style.display = form.style.display === 'block' ? 'none' : 'block';
+    }
+    
+    function toggleUpdateDamageForm(rentalId) {
+      const form = document.getElementById('update-damage-form-' + rentalId);
+      form.style.display = form.style.display === 'block' ? 'none' : 'block';
+    }
+    
+    function updateDamageAmount(rentalId) {
+      toggleUpdateDamageForm(rentalId);
+    }
+    
+    function updateDamageReport(rentalId) {
+      const amount = document.getElementById('update-damage-amount-' + rentalId).value;
+      if (amount && amount > 0) {
+        if (confirm('Are you sure you want to update the damage amount to ₹' + amount + '?')) {
+          transitionRental(rentalId, 'damage', amount);
+        }
+      } else {
+        alert('Please enter a valid damage amount');
+      }
+    }
+    
+    function reportDamage(rentalId) {
+      const amount = document.getElementById('damage-amount-' + rentalId).value;
+      if (amount && amount > 0) {
+        if (confirm('Are you sure you want to report damage for ₹' + amount + '?')) {
+          transitionRental(rentalId, 'damage', amount);
+        }
+      } else {
+        alert('Please enter a valid damage amount');
+      }
+    }
+    
+    function transitionRental(rentalId, status, damageAmount = null) {
+      const url = '/api/rentals/' + rentalId + '/transition';
+      const data = { status: status };
+      
+      if (damageAmount) {
+        data.damage_amount = damageAmount;
+      }
+      
+      fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': document.querySelector('[name="csrf-token"]')?.content
+        },
+        body: JSON.stringify(data)
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          alert('Rental status updated successfully!');
+          location.reload();
+        } else {
+          alert('Error: ' + (data.error || 'Failed to update rental status'));
+        }
+      })
+      .catch(error => {
+        alert('Error: ' + error.message);
+      });
+    }
+  </script>
+</body>
+</html>

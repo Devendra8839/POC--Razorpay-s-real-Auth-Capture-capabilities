@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <%= csrf_meta_tags %>
+  <title>Customer Dashboard - Razorpay Rental POC</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      line-height: 1.6;
+    }
+    .dashboard {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    h1 {
+      color: #333;
+    }
+    .rental-card {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      background-color: #f9f9f9;
+    }
+    .rental-status {
+      padding: 5px 10px;
+      border-radius: 4px;
+      display: inline-block;
+      font-weight: bold;
+    }
+    .status-requested { background-color: #fff3cd; }
+    .status-payment_pending { background-color: #ffeeba; }
+    .status-rental_paid { background-color: #d1ecf1; }
+    .status-authorized { background-color: #cce5ff; }
+    .status-active { background-color: #d4edda; }
+    .status-returned { background-color: #e2e3e5; }
+    .status-completed { background-color: #d4edda; }
+    .status-damage { background-color: #f8d7da; }
+    .status-unreturned { background-color: #f5c6cb; }
+    .payment-info {
+      margin-top: 15px;
+      padding: 10px;
+      background-color: #e9ecef;
+      border-radius: 4px;
+    }
+    .payment-status {
+      padding: 3px 8px;
+      border-radius: 3px;
+      display: inline-block;
+      font-size: 0.9em;
+    }
+    .status-captured { background-color: #d4edda; }
+    .status-authorized { background-color: #cce5ff; }
+    .status-refunded { background-color: #f8d7da; }
+    .status-pending { background-color: #fff3cd; }
+    .status-failed { background-color: #f5c6cb; }
+    .total-amount {
+      font-size: 1.2em;
+      font-weight: bold;
+      margin-top: 10px;
+    }
+    .razorpay-btn {
+      background-color: #635bff;
+      color: white;
+      padding: 10px 20px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 1em;
+      margin-top: 10px;
+    }
+  </style>
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+</head>
+<body>
+  <div class="dashboard">
+    <h1>Customer Dashboard</h1>
+    
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <h2>Your Rentals</h2>
+      <button class="razorpay-btn" onclick="createTestRental()" style="background-color: #28a745; margin-top: 0;">+ Create Test Rental / Product</button>
+    </div>
+    
+    <% @rentals.each do |rental| %>
+      <div class="rental-card">
+        <h3>Rental #<%= rental.id %></h3>
+        
+        <div>
+          <strong>Product:</strong> <%= rental.product&.name || 'Product #' + rental.product_id.to_s %><br>
+          <strong>Seller:</strong> <%= rental.product&.seller&.name || 'Seller #' + rental.product&.seller_id.to_s %><br>
+          <strong>Dates:</strong> <%= rental.days %> days<br>
+          <strong>Rental Amount:</strong> ₹ 
+          <input type="number" id="rental_amount_<%= rental.id %>" oninput="updateTotal(<%= rental.id %>)" value="<%= rental.rental_amount %>" class="amount-input" onchange="updateAmount(<%= rental.id %>, 'rental_amount', this.value)" <%= 'disabled' if rental.order_id.present? %>>
+          <br>
+          <strong>Security Deposit:</strong> ₹ 
+          <input type="number" id="security_amount_<%= rental.id %>" oninput="updateTotal(<%= rental.id %>)" value="<%= rental.security_amount %>" class="amount-input" onchange="updateAmount(<%= rental.id %>, 'security_amount', this.value)" <%= 'disabled' if rental.security_order_id.present? %>>
+          <br>
+          <strong>Status:</strong> 
+          <span class="rental-status status-<%= rental.status %>">
+            <%= rental.status.humanize %>
+          </span>
+        </div>
+        
+        <div class="total-amount" id="total_exposure_<%= rental.id %>">
+          <strong>Total Exposure:</strong> ₹0
+        </div>
+        <script>
+          // Initialize the total using the current input values
+          document.addEventListener('DOMContentLoaded', function() {
+            updateTotal(<%= rental.id %>);
+          });
+        </script>
+        
+        <div class="payment-info">
+          <strong>Rental Payment:</strong><br>
+          <% rental_payment = rental.payments.find_by(payment_type: 'rental_payment') %>
+          <% if rental_payment %>
+            <strong>Status:</strong> 
+            <span class="payment-status status-<%= rental_payment.status %>">
+              <%= rental_payment.status.humanize %>
+            </span><br>
+            <% if rental_payment.payment_id %>
+              <strong>Payment ID:</strong> <%= rental_payment.payment_id %><br>
+            <% end %>
+          <% else %>
+            <span class="payment-status status-pending">Pending</span>
+          <% end %>
+          
+          <% if rental_payment.nil? || rental_payment.status != 'captured' %>
+            <button class="razorpay-btn" onclick="payRental(<%= rental.id %>)">Pay Rental Amount</button>
+          <% end %>
+        </div>
+        
+        <div class="payment-info">
+          <strong>Security Deposit:</strong><br>
+          <% security_payment = rental.payments.find_by(payment_type: 'security_deposit') %>
+          <% if security_payment %>
+            <strong>Status:</strong> 
+            <span class="payment-status status-<%= security_payment.status %>">
+              <%= security_payment.status.humanize %>
+            </span><br>
+            <% if security_payment.authorization_id %>
+              <strong>Authorization ID:</strong> <%= security_payment.authorization_id %><br>
+            <% end %>
+            <% if rental.damage_amount.to_i > 0 %>
+              <div style="margin-top: 10px; padding: 10px; background-color: #f8d7da; border-radius: 4px; color: #721c24;">
+                <strong>Security Deposit Hold:</strong> ₹<%= rental.security_amount %><br>
+                <strong>Damage Penalty (Reported by Seller):</strong> -₹<%= rental.damage_amount %><br>
+                <hr style="border-top: 1px solid #f5c6cb; margin: 5px 0;">
+                <strong>Expected Return Amount:</strong> ₹<%= rental.security_amount - rental.damage_amount %>
+              </div>
+            <% end %>
+            <% if security_payment.capture_id %>
+              <strong>Capture ID:</strong> <%= security_payment.capture_id %><br>
+              <strong>Captured Amount:</strong> ₹<%= security_payment.amount / 100.0 %><br>
+            <% end %>
+            <% if security_payment.refund_id %>
+              <strong>Refund ID:</strong> <%= security_payment.refund_id %><br>
+              <strong>Refund Status:</strong> Processed<br>
+            <% end %>
+          <% else %>
+            <span class="payment-status status-pending">Pending</span>
+          <% end %>
+          
+          <% if rental_payment&.status == 'captured' %>
+            <% if security_payment.nil? || security_payment.status != 'authorized' %>
+              <button class="razorpay-btn" onclick="authorizeSecurity(<%= rental.id %>)">Authorize Security Deposit</button>
+            <% end %>
+          <% else %>
+            <p style="color: #666; font-size: 0.9em;"><em>Please complete the Rental Payment first.</em></p>
+          <% end %>
+          
+            <button class="razorpay-btn" style="background-color: #6c757d; margin-top: 10px;" onclick="checkRefundStatus(<%= rental.id %>)">Check Refund Status Tracker</button> 
+                <button class="razorpay-btn" style="background-color: #17a2b8; margin-top: 10px;" onclick="requestFinalRefund(<%= rental.id %>)">Request Final Refund (₹<%= rental.security_amount - rental.damage_amount.to_i %>)</button>
+        </div>
+      </div>
+    <% end %>
+  </div>
+  
+  <script>
+    function updateTotal(rentalId) {
+      const r = parseInt(document.getElementById("rental_amount_" + rentalId).value, 10) || 0;
+      const s = parseInt(document.getElementById("security_amount_" + rentalId).value, 10) || 0;
+      document.getElementById("total_exposure_" + rentalId).innerHTML = "<strong>Total Exposure:</strong> ₹" + (r + s);
+    }
+    function updateAmount(rentalId, field, value) {
+      const payload = { rental: {} };
+      payload.rental[field] = parseInt(value, 10);
+      fetch(`/api/rentals/${rentalId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": document.querySelector("meta[name=\"csrf-token\"]")?.content
+        },
+        body: JSON.stringify(payload)
+      })
+      .then(response => {
+        if (response.ok) location.reload();
+        else alert("Failed to update amount.");
+      })
+      .catch(err => alert("Error updating: " + err));
+    }
+
+    function createTestRental() {
+      fetch("/admin/create_test_rental", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": document.querySelector("meta[name=\"csrf-token\"]")?.content
+        }
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          alert("New Test Product & Rental created successfully! Reloading...");
+          location.reload();
+        } else {
+          alert("Error creating test rental: " + (data.error || "Unknown error"));
+        }
+      })
+      .catch(error => {
+        alert("Error: " + error.message);
+      });
+    }
+
+    function payRental(rentalId) {
+      const liveAmount = document.getElementById("rental_amount_" + rentalId).value;
+      fetch('/api/payments/create_order', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.content
+        },
+        body: JSON.stringify({ rental_id: rentalId, dynamic_amount: liveAmount })
+      })
+        .then(response => response.json())
+        .then(data => {
+          if (data.order_id) {
+            openRazorpayCheckout(data.order_id, data.amount, 'rental', rentalId);
+          } else {
+            alert('Error creating order: ' + (data.error || 'Unknown error'));
+          }
+        })
+        .catch(error => {
+          alert('Error: ' + error.message);
+        });
+    }
+    
+    function requestFinalRefund(rentalId) {
+      if (confirm("Send request for final refund? The system will authorize the damage deduction and return the remaining security deposit. \n\nOnce processed, you can click Check Refund Status Tracker!")) {
+        fetch(`/api/rentals/${rentalId}/admin_capture_damage`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": document.querySelector("meta[name=\"csrf-token\"]")?.content
+          }
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            alert(data.message + "\n\nYou can now click 'Check Refund Status Tracker' to verify!");
+            location.reload();
+          } else {
+            alert("Error: " + (data.error || "Unknown error"));
+          }
+        })
+        .catch(err => alert("Error: " + err));
+      }
+    }
+
+    function checkRefundStatus(rentalId) {
+      fetch(`/api/rentals/${rentalId}/refund_status`)
+      .then(response => response.json())
+      .then(data => {
+        if (data.status) {
+          alert("Live Refund Status from Razorpay: \n" + data.status);
+        } else {
+          alert("Error: " + (data.error || "Unknown"));
+        }
+      })
+      .catch(err => alert("Error: " + err));
+    }
+
+    function authorizeSecurity(rentalId) {
+      const liveSecAmount = document.getElementById("security_amount_" + rentalId).value;
+      fetch('/api/payments/authorize_security', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.content
+        },
+        body: JSON.stringify({ rental_id: rentalId, dynamic_amount: liveSecAmount })
+      })
+        .then(response => response.json())
+        .then(data => {
+          if (data.order_id) {
+            openRazorpayCheckout(data.order_id, data.amount, 'security', rentalId);
+          } else {
+            alert('Error creating authorization: ' + (data.error || 'Unknown error'));
+          }
+        })
+        .catch(error => {
+          alert('Error: ' + error.message);
+        });
+    }
+    
+    function openRazorpayCheckout(orderId, amount, type, rentalId) {
+      const options = {
+        key: '<%= ENV['RAZORPAY_KEY_ID'] || 'rzp_test_YourKeyId' %>',
+        amount: amount,
+        currency: 'INR',
+        name: 'Razorpay Rental POC',
+        description: type === 'rental' ? 'Rental Payment' : 'Security Deposit Authorization',
+        order_id: orderId,
+        handler: function(response) {
+        if (type === 'rental') {
+          captureRentalPayment(response.razorpay_payment_id, rentalId, amount);
+        } else {
+          fetch('/api/payments/sync_security_authorization', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': document.querySelector('[name="csrf-token"]')?.content },
+            body: JSON.stringify({ rental_id: rentalId, payment_id: response.razorpay_payment_id })
+          }).then(() => {
+            alert('Security deposit authorized successfully!');
+            location.reload();
+          });
+        }
+      },
+        prefill: {
+          name: 'Customer Name',
+          email: 'customer@example.com',
+          contact: '9999999999'
+        },
+        notes: {
+          rental_id: rentalId,
+          type: type
+        },
+        theme: {
+          color: '#635bff'
+        }
+      };
+      
+      const rzp = new Razorpay(options);
+      rzp.open();
+    }
+    
+    function captureRentalPayment(paymentId, rentalId, amountInPaise) {
+      fetch('/api/payments/capture_payment', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': document.querySelector('[name="csrf-token"]')?.content
+        },
+        body: JSON.stringify({
+          payment_id: paymentId,
+          amount: (amountInPaise / 100).toString()
+        })
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          alert('Rental payment captured successfully!');
+          location.reload();
+        } else {
+          alert('Error capturing payment: ' + (data.error || 'Unknown error'));
+        }
+      })
+      .catch(error => {
+        alert('Error: ' + error.message);
+      });
+    }
+  </script>
+</body>
+</html>

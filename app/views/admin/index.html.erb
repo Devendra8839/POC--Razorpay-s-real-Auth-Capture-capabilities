@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <%= csrf_meta_tags %>
+  <title>Admin Panel - Razorpay Rental POC</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      line-height: 1.6;
+    }
+    .admin-panel {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    h1 {
+      color: #333;
+    }
+    .section {
+      margin-bottom: 30px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 20px;
+      background-color: #f9f9f9;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 15px;
+    }
+    th, td {
+      padding: 12px;
+      text-align: left;
+      border-bottom: 1px solid #ddd;
+    }
+    th {
+      background-color: #635bff;
+      color: white;
+    }
+    tr:hover {
+      background-color: #f5f5f5;
+    }
+    .status-badge {
+      padding: 5px 10px;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+    .status-requested { background-color: #fff3cd; }
+    .status-payment_pending { background-color: #ffeeba; }
+    .status-rental_paid { background-color: #d1ecf1; }
+    .status-authorized { background-color: #cce5ff; }
+    .status-active { background-color: #d4edda; }
+    .status-returned { background-color: #e2e3e5; }
+    .status-completed { background-color: #d4edda; }
+    .status-damage { background-color: #f8d7da; }
+    .status-unreturned { background-color: #f5c6cb; }
+    .payment-status {
+      padding: 3px 8px;
+      border-radius: 3px;
+      font-size: 0.85em;
+    }
+    .status-captured { background-color: #d4edda; }
+    .status-authorized { background-color: #cce5ff; }
+    .status-refunded { background-color: #f8d7da; }
+    .status-pending { background-color: #fff3cd; }
+    .status-failed { background-color: #f5c6cb; }
+    .webhook-log {
+      max-height: 300px;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      padding: 10px;
+      background-color: white;
+      border-radius: 4px;
+    }
+    .webhook-entry {
+      padding: 8px;
+      border-bottom: 1px solid #eee;
+      font-family: monospace;
+      font-size: 0.9em;
+    }
+    .webhook-entry:last-child {
+      border-bottom: none;
+    }
+    .btn {
+      padding: 8px 16px;
+      background-color: #635bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-right: 10px;
+    }
+    .btn-secondary {
+      background-color: #6c757d;
+    }
+  </style>
+</head>
+<body>
+  <div class="admin-panel">
+    <h1>Admin Panel - Razorpay Rental POC</h1>
+    
+    <div class="section">
+      <h2>System Overview</h2>
+      <p><strong>Total Rentals:</strong> <%= @rentals_count %></p>
+      <p><strong>Total Payments:</strong> <%= @payments_count %></p>
+      <p><strong>Active Rentals:</strong> <%= @active_rentals %></p>
+      <p><strong>Completed Rentals:</strong> <%= @completed_rentals %></p>
+    </div>
+    
+    <div class="section">
+      <h2>Recent Rentals</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Product</th>
+            <th>Renter</th>
+            <th>Amount</th>
+            <th>Security</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% @recent_rentals.each do |rental| %>
+            <tr>
+              <td><%= rental.id %></td>
+              <td><%= rental.product&.name || 'Product #' + rental.product_id.to_s %></td>
+              <td><%= rental.renter&.name || 'User #' + rental.renter_id.to_s %></td>
+              <td>₹<%= rental.rental_amount %></td>
+              <td>₹<%= rental.security_amount %></td>
+              <td>
+                <span class="status-badge status-<%= rental.status %>">
+                  <%= rental.status.humanize %>
+                </span>
+              </td>
+              <td>
+                <button class="btn" onclick="window.location.href='/seller?rental_id=<%= rental.id %>'">View</button>
+                <% if rental.status == 'damage' %>
+                  <br><br>
+                  <small>Reported Damage: ₹<%= rental.damage_amount %></small><br>
+                  <button class="btn btn-danger" onclick="captureDamage(<%= rental.id %>)">Approve Deduction & Refund</button>
+                <% end %>
+              </td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+    
+    <div class="section">
+      <h2>Recent Payments</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Rental</th>
+            <th>Type</th>
+            <th>Amount</th>
+            <th>Status</th>
+            <th>Payment ID</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% @recent_payments.each do |payment| %>
+            <tr>
+              <td><%= payment.id %></td>
+              <td><%= payment.rental_id %></td>
+              <td><%= payment.payment_type.humanize %></td>
+              <td>₹<%= payment.amount / 100.0 %></td>
+              <td>
+                <span class="payment-status status-<%= payment.status %>">
+                  <%= payment.status.humanize %>
+                </span>
+              </td>
+              <td><%= payment.payment_id || 'N/A' %></td>
+              <td><%= payment.created_at.strftime('%Y-%m-%d %H:%M') %></td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+    
+    <div class="section">
+      <h2>Razorpay Webhook Logs</h2>
+      <div class="webhook-log">
+        <% if @webhook_logs.any? %>
+          <% @webhook_logs.each do |log| %>
+            <div class="webhook-entry">
+              [<%= log.created_at.strftime('%Y-%m-%d %H:%M:%S') %>] <%= log.event_type %> - <%= log.payload %>
+            </div>
+          <% end %>
+        <% else %>
+          <p>No webhook logs found.</p>
+        <% end %>
+      </div>
+    </div>
+    
+    <div class="section">
+      <h2>Test Actions</h2>
+      <button class="btn" onclick="createTestRental()">Create Test Rental</button>
+      <button class="btn btn-secondary" onclick="clearTestData()">Clear Test Data</button>
+    </div>
+  </div>
+  
+  <script>
+    function createTestRental() {
+      if (confirm('Are you sure you want to create a test rental with sample data?')) {
+        fetch('/admin/create_test_rental', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': document.querySelector('[name="csrf-token"]')?.content
+          }
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            alert('Test rental created successfully!');
+            location.reload();
+          } else {
+            alert('Error: ' + (data.error || 'Failed to create test rental'));
+          }
+        })
+        .catch(error => {
+          alert('Error: ' + error.message);
+        });
+      }
+    }
+    
+    function captureDamage(rentalId) {
+      if (!confirm("Are you sure you want to capture the damage amount and automatically release the remaining hold?")) return;
+      fetch(`/api/rentals/${rentalId}/admin_capture_damage`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": document.querySelector("meta[name=\"csrf-token\"]")?.content
+        }
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          alert(data.message);
+          location.reload();
+        } else {
+          alert("Error: " + (data.error || "Unknown error"));
+        }
+      })
+      .catch(err => alert("Error: " + err));
+    }
+
+    function clearTestData() {
+      if (confirm('Are you sure you want to clear ALL test data? This cannot be undone!')) {
+        fetch('/admin/clear_test_data', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': document.querySelector('[name="csrf-token"]')?.content
+          }
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            alert('Test data cleared successfully!');
+            location.reload();
+          } else {
+            alert('Error: ' + (data.error || 'Failed to clear test data'));
+          }
+        })
+        .catch(error => {
+          alert('Error: ' + error.message);
+        });
+      }
+    }
+  </script>
+</body>
+</html>
